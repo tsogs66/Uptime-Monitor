@@ -15,11 +15,23 @@ Everything runs as Docker containers inside one unprivileged LXC.
 
 ## 1. Deploy the container
 
-Copy this whole folder to your Proxmox host (e.g. via `scp` or `git clone`),
-then from the Proxmox shell:
+### Option A — one-line install (recommended)
+
+Paste this into your Proxmox host shell:
 
 ```bash
-cd proxmox-monitoring-lxc
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/tsogs66/Uptime-Monitor/main/install.sh)"
+```
+
+This clones the [tsogs66/Uptime-Monitor](https://github.com/tsogs66/Uptime-Monitor)
+repo to `/opt/Uptime-Monitor` and runs `create-lxc.sh` automatically. Re-run
+the same command later to pull updates and redeploy.
+
+### Option B — manual clone
+
+```bash
+git clone https://github.com/tsogs66/Uptime-Monitor.git
+cd Uptime-Monitor
 chmod +x create-lxc.sh
 bash create-lxc.sh
 ```
@@ -32,8 +44,8 @@ Optional environment variables (set before running, e.g.
 | `CTID` | next free ID | container ID |
 | `HOSTNAME` | `monitoring` | container hostname |
 | `STORAGE` | `local-lvm` | rootfs storage pool |
-| `DISK_SIZE` | `8` (GB) | disk size |
-| `MEMORY` | `2048` (MB) | RAM |
+| `DISK_SIZE` | `64` (GB) | disk size |
+| `MEMORY` | `8192` (MB) | RAM |
 | `CORES` | `2` | vCPUs |
 | `BRIDGE` | `vmbr0` | network bridge |
 | `IP_CONFIG` | `dhcp` | static IP e.g. `192.168.1.50/24,gw=192.168.1.1` |
