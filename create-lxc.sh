@@ -13,11 +13,36 @@
 
 set -euo pipefail
 
+# Print a clear error (with line number and the command that failed) instead
+# of dying silently — every earlier failure of this script exited with zero
+# output because nothing caught it. This trap fixes that permanently.
+trap 'echo ">>> ERROR: script failed at line $LINENO. Last command: $BASH_COMMAND" >&2' ERR
+
+echo ">>> Starting Uptime-Monitor LXC installer..."
+
 # ---------------------------------------------------------------------------
 # Configuration — edit these to taste before running, or export as env vars
 # ---------------------------------------------------------------------------
-CTID="${CTID:-$(pvesh get /cluster/nextid)}"
-HOSTNAME="${HOSTNAME:-monitoring}"
+
+# Resolve next free container ID. Prefer pvesh; if that's unavailable or
+# fails for any reason, fall back to scanning existing VM/CT IDs directly
+# instead of aborting the whole script.
+if [[ -z "${CTID:-}" ]]; then
+  echo ">>> Determining next free container ID..."
+  if command -v pvesh >/dev/null 2>&1 && CTID_AUTO="$(pvesh get /cluster/nextid 2>/dev/null)"; then
+    CTID="$CTID_AUTO"
+  else
+    echo ">>> pvesh unavailable or failed — falling back to manual ID scan..."
+    USED_IDS="$( { pct list 2>/dev/null | awk 'NR>1 {print $1}'; qm list 2>/dev/null | awk 'NR>1 {print $1}'; } | sort -n | tail -1)"
+    CTID=$(( ${USED_IDS:-100} + 1 ))
+  fi
+fi
+echo ">>> Using container ID: $CTID"
+
+# NOTE: intentionally named CT_HOSTNAME, not HOSTNAME — bash auto-populates
+# $HOSTNAME with the current machine's hostname (e.g. "pve"), so using
+# HOSTNAME here would silently ignore the "monitoring" default.
+CT_HOSTNAME="${CT_HOSTNAME:-monitoring}"
 STORAGE="${STORAGE:-local-lvm}"          # storage pool for the rootfs
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"  # storage pool holding CT templates
 DISK_SIZE="${DISK_SIZE:-64}"             # GB
@@ -41,9 +66,9 @@ if ! pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE"; then
   pveam download "$TEMPLATE_STORAGE" "$TEMPLATE"
 fi
 
-echo ">>> Creating LXC $CTID ($HOSTNAME) ..."
+echo ">>> Creating LXC $CTID ($CT_HOSTNAME) ..."
 pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
-  --hostname "$HOSTNAME" \
+  --hostname "$CT_HOSTNAME" \
   --cores "$CORES" \
   --memory "$MEMORY" \
   --swap "$SWAP" \
@@ -98,7 +123,7 @@ IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
 cat <<EOF
 
 =========================================================================
- Monitoring LXC ready!  (CTID: $CTID, hostname: $HOSTNAME)
+ Monitoring LXC ready!  (CTID: $CTID, hostname: $CT_HOSTNAME)
  Root password: $PASSWORD
 
  Container IP: $IP
