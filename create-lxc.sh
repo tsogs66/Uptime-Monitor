@@ -56,7 +56,11 @@ PASSWORD="${PASSWORD:-}"                 # leave blank to auto-generate
 
 # ---------------------------------------------------------------------------
 if [[ -z "$PASSWORD" ]]; then
-  PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
+  # "|| true" prevents a false-positive failure: head closes the pipe after
+  # 20 bytes, which sends tr a SIGPIPE (exit 141) even though the password
+  # was generated correctly — with pipefail on, that would otherwise abort
+  # the whole script.
+  PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
 fi
 
 echo ">>> Checking template availability..."
