@@ -35,22 +35,85 @@ scrape_configs:
   # Add/remove targets freely; each becomes its own metric series in Grafana.
   # ===========================================================================
 
-  - job_name: "blackbox-http-common-services"
+  - job_name: "blackbox-http-search-cloud-dev"
     metrics_path: /probe
     params:
       module: [http_2xx]
     static_configs:
       - targets:
           - https://www.google.com
+          - https://www.bing.com
           - https://www.cloudflare.com
           - https://www.github.com
+          - https://gitlab.com
           - https://www.microsoft.com
-          - https://www.amazon.com
-          - https://www.youtube.com
+          - https://azure.microsoft.com
+          - https://aws.amazon.com
+          - https://console.cloud.google.com
+          - https://www.digitalocean.com
+          - https://vercel.com
+          - https://www.npmjs.com
+          - https://hub.docker.com
           - https://www.wikipedia.org
+        labels:
+          group: "web-services"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: "blackbox-http-social-communication"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://www.facebook.com
+          - https://www.instagram.com
+          - https://www.x.com
+          - https://www.tiktok.com
           - https://www.reddit.com
-          - https://www.netflix.com
           - https://www.discord.com
+          - https://web.telegram.org
+          - https://web.whatsapp.com
+          - https://www.messenger.com
+          - https://slack.com
+          - https://zoom.us
+          - https://teams.microsoft.com
+          - https://www.linkedin.com
+        labels:
+          group: "web-services"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: "blackbox-http-shopping-streaming"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://www.amazon.com
+          - https://www.lazada.com.ph
+          - https://shopee.ph
+          - https://www.youtube.com
+          - https://www.netflix.com
+          - https://www.disneyplus.com
+          - https://www.primevideo.com
+          - https://www.spotify.com
+          - https://www.twitch.tv
+          - https://www.hbomax.com
+          - https://www.iqiyi.com
+          - https://www.viu.com
+        labels:
+          group: "web-services"
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -65,14 +128,28 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
+          - https://store.steampowered.com
           - https://steamstatus.com
           - https://status.epicgames.com
+          - https://www.epicgames.com
           - https://www.ea.com
+          - https://www.ubisoft.com
           - https://www.xbox.com
           - https://status.playstation.com
+          - https://www.playstation.com
           - https://www.minecraft.net
           - https://www.riotgames.com
+          - https://www.leagueoflegends.com
+          - https://www.valorant.com
           - https://www.battle.net
+          - https://www.roblox.com
+          - https://www.mobilelegends.com
+          - https://www.pubgmobile.com
+          - https://www.callofduty.com
+          - https://www.rockstargames.com
+          - https://www.nintendo.com
+        labels:
+          group: "games"
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
@@ -85,7 +162,7 @@ scrape_configs:
   # These are the public web front-ends / status endpoints for common
   # banking and e-wallet apps. This only checks that the public site/portal
   # is reachable — it does NOT check your account or transactions.
-  - job_name: "blackbox-http-financial-banking"
+  - job_name: "blackbox-http-financial-banking-ph"
     metrics_path: /probe
     params:
       module: [http_2xx]
@@ -103,10 +180,44 @@ scrape_configs:
           - https://www.psbank.com.ph
           - https://www.pnb.com.ph
           - https://www.chinabank.ph
+          - https://www.eastwestbanker.com
+          - https://www.philippinenationalbank.com.ph
           - https://www.grab.com/ph          # GrabPay
           - https://shopeepay.ph
           - https://www.coins.ph
+          - https://www.gotyme.com.ph
+          - https://www.tonik.com
+          - https://www.uno.bank
+        labels:
+          group: "financial"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # --- Financial / banking / e-wallet apps — international, edit freely ---
+  - job_name: "blackbox-http-financial-banking-intl"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
           - https://www.paypal.com
+          - https://www.wise.com
+          - https://www.revolut.com
+          - https://www.chase.com
+          - https://www.bankofamerica.com
+          - https://www.wellsfargo.com
+          - https://www.citibank.com
+          - https://www.hsbc.com
+          - https://www.stripe.com
+          - https://www.venmo.com
+          - https://www.cash.app
+          - https://www.coinbase.com
+          - https://www.binance.com
         labels:
           group: "financial"
     relabel_configs:
