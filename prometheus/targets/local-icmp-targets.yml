@@ -1,0 +1,42 @@
+# =============================================================================
+# LOCAL NETWORK / INFRASTRUCTURE — ICMP (ping) targets
+# =============================================================================
+# Edit this file to add/remove devices on your LAN. Prometheus watches this
+# file and picks up changes automatically — NO restart or reload needed,
+# just save the file.
+#
+# Format: one block per group of targets. "labels" are optional metadata
+# attached to every metric from these targets (shows up in Grafana/alerts).
+#
+# Replace the example IPs below with your actual devices.
+# =============================================================================
+
+- targets:
+    - 192.168.1.1          # <- router / main gateway
+  labels:
+    group: "gateway"
+    name: "main-router"
+
+- targets:
+    - 192.168.1.2           # <- example: modem/ONT (if separate from router)
+  labels:
+    group: "infra"
+    name: "modem-ont"
+
+- targets:
+    - 192.168.1.10          # <- example: Proxmox host
+    - 192.168.1.11          # <- example: NAS
+    - 192.168.1.12          # <- example: switch (if it has an IP)
+    - 192.168.1.13          # <- example: access point
+  labels:
+    group: "infra"
+    name: "core-infra"
+
+- targets:
+    - 192.168.1.20          # <- example: desktop PC
+    - 192.168.1.21          # <- example: laptop
+    - 192.168.1.30          # <- example: game console
+    - 192.168.1.31          # <- example: smart TV
+  labels:
+    group: "devices"
+    name: "client-devices"

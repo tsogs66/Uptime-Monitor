@@ -1,0 +1,88 @@
+groups:
+  - name: uptime-alerts
+    rules:
+      - alert: ServiceDown
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is down"
+          description: "Blackbox probe for {{ $labels.instance }} has failed for more than 2 minutes."
+
+      - alert: HighLatency
+        expr: probe_duration_seconds > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} is slow to respond"
+          description: "Probe duration for {{ $labels.instance }} has exceeded 2s for 5 minutes."
+
+      - alert: HostHighCPU
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage above 90% for 10 minutes."
+
+      - alert: HostLowDisk
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) * 100 < 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Less than 10% free disk space remaining."
+
+  - name: wan-uplink-alerts
+    rules:
+      # Fires only if ALL WAN anchor targets are unreachable at once — a
+      # single anchor failing is more likely that provider's own outage,
+      # not your internet connection.
+      - alert: WANDown
+        expr: sum(probe_success{group="wan", job="blackbox-icmp-wan-uplink"}) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WAN / internet uplink appears DOWN"
+          description: "All WAN anchor probes (1.1.1.1, 8.8.8.8, 9.9.9.9) have failed for over 1 minute."
+
+      - alert: WANHighLatency
+        expr: avg by (instance) (probe_duration_seconds{group="wan", job="blackbox-icmp-wan-uplink"}) > 0.15
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAN latency is elevated ({{ $labels.instance }})"
+          description: "Ping latency to {{ $labels.instance }} has averaged over 150ms for 3 minutes — connection may be congested or degraded."
+
+      - alert: WANPacketLoss
+        expr: avg_over_time(probe_success{group="wan", job="blackbox-icmp-wan-uplink"}[5m]) < 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAN packet loss detected ({{ $labels.instance }})"
+          description: "More than 10% of pings to {{ $labels.instance }} have failed over the last 5 minutes."
+
+      - alert: WANSlowBandwidth
+        expr: speedtest_download_bits_per_second < 20000000   # < 20 Mbps — adjust to your plan's expected speed
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAN download speed is degraded"
+          description: "Speedtest download throughput has been below 20 Mbps for 10 minutes. Adjust the threshold in alert_rules.yml to match your ISP plan."
+
+      - alert: WANHighPing
+        expr: speedtest_ping_latency_milliseconds > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAN speedtest ping is high"
+          description: "Speedtest-measured ping has exceeded 100ms for 10 minutes."
