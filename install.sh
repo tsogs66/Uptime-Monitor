@@ -1,49 +1,99 @@
-#!/usr/bin/env bash
-#
-# install.sh — one-line bootstrapper for the Uptime-Monitor LXC stack.
-#
-# Run this ON THE PROXMOX HOST. It clones/updates the
-# tsogs66/Uptime-Monitor repo into /opt, then hands off to create-lxc.sh,
-# which provisions the LXC and deploys Prometheus + Grafana + Uptime Kuma.
-#
-# One-liner to paste into the Proxmox host shell:
-#
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/tsogs66/Uptime-Monitor/main/install.sh)"
-#
-set -euo pipefail
+version: "3.8"
 
-REPO_URL="https://github.com/tsogs66/Uptime-Monitor.git"
-REPO_DIR="/opt/Uptime-Monitor"
+# Prometheus + Grafana + Uptime Kuma monitoring stack
+# Includes Blackbox Exporter (HTTP/ICMP/TCP probes) and Node Exporter
+# (host metrics for the LXC itself).
 
-echo ">>> Uptime-Monitor installer"
+networks:
+  monitoring:
+    driver: bridge
 
-if [[ $EUID -ne 0 ]]; then
-  echo "This script must be run as root on the Proxmox host." >&2
-  exit 1
-fi
+volumes:
+  prometheus-data:
+  grafana-data:
+  uptime-kuma-data:
 
-if ! command -v pveversion >/dev/null 2>&1; then
-  echo "pveversion not found — this doesn't look like a Proxmox VE host." >&2
-  echo "Run this script on the Proxmox host shell, not inside a VM/LXC." >&2
-  exit 1
-fi
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    networks: [monitoring]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
 
-if ! command -v git >/dev/null 2>&1; then
-  echo ">>> Installing git ..."
-  apt-get update -qq
-  apt-get install -y git >/dev/null
-fi
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    networks: [monitoring]
+    volumes:
+      - ./prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    ports:
+      - "9115:9115"
 
-if [[ -d "$REPO_DIR/.git" ]]; then
-  echo ">>> Existing checkout found at $REPO_DIR — updating ..."
-  git -C "$REPO_DIR" pull --ff-only
-else
-  echo ">>> Cloning $REPO_URL into $REPO_DIR ..."
-  git clone --depth 1 "$REPO_URL" "$REPO_DIR"
-fi
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    networks: [monitoring]
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    ports:
+      - "9100:9100"
 
-cd "$REPO_DIR"
-chmod +x create-lxc.sh
+  speedtest-exporter:
+    image: miguelndecarvalho/speedtest-exporter:latest
+    container_name: speedtest-exporter
+    restart: unless-stopped
+    networks: [monitoring]
+    environment:
+      - SPEEDTEST_CACHE_FOR=5m   # cache result so scrapes don't each trigger a new test
+    ports:
+      - "9798:9798"
 
-echo ">>> Launching create-lxc.sh ..."
-exec bash create-lxc.sh
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    networks: [monitoring]
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    networks: [monitoring]
+    volumes:
+      - uptime-kuma-data:/app/data
+    ports:
+      - "3001:3001"

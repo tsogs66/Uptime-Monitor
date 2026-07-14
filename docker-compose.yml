@@ -1,99 +1,157 @@
-version: "3.8"
+#!/usr/bin/env bash
+#
+# create-lxc.sh — Provision a Proxmox VE unprivileged LXC container
+# preloaded with Docker + Docker Compose, ready to run the
+# Prometheus + Grafana + Uptime Kuma monitoring stack.
+#
+# RUN THIS SCRIPT ON THE PROXMOX HOST (not inside a container/VM).
+#
+# Usage:
+#   bash create-lxc.sh
+#
+# After it finishes, it prints the container IP and next steps.
 
-# Prometheus + Grafana + Uptime Kuma monitoring stack
-# Includes Blackbox Exporter (HTTP/ICMP/TCP probes) and Node Exporter
-# (host metrics for the LXC itself).
+set -euo pipefail
 
-networks:
-  monitoring:
-    driver: bridge
+# Print a clear error (with line number and the command that failed) instead
+# of dying silently — every earlier failure of this script exited with zero
+# output because nothing caught it. This trap fixes that permanently.
+trap 'echo ">>> ERROR: script failed at line $LINENO. Last command: $BASH_COMMAND" >&2' ERR
 
-volumes:
-  prometheus-data:
-  grafana-data:
-  uptime-kuma-data:
+echo ">>> Starting Uptime-Monitor LXC installer..."
 
-services:
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    restart: unless-stopped
-    networks: [monitoring]
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
-      - ./prometheus/targets:/etc/prometheus/targets:ro
-      - prometheus-data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=30d"
-      - "--web.enable-lifecycle"
-    ports:
-      - "9090:9090"
+# ---------------------------------------------------------------------------
+# Configuration — edit these to taste before running, or export as env vars
+# ---------------------------------------------------------------------------
 
-  blackbox-exporter:
-    image: prom/blackbox-exporter:latest
-    container_name: blackbox-exporter
-    restart: unless-stopped
-    networks: [monitoring]
-    volumes:
-      - ./prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
-    command:
-      - "--config.file=/etc/blackbox_exporter/config.yml"
-    ports:
-      - "9115:9115"
+# Resolve next free container ID. Prefer pvesh; if that's unavailable or
+# fails for any reason, fall back to scanning existing VM/CT IDs directly
+# instead of aborting the whole script.
+if [[ -z "${CTID:-}" ]]; then
+  echo ">>> Determining next free container ID..."
+  if command -v pvesh >/dev/null 2>&1 && CTID_AUTO="$(pvesh get /cluster/nextid 2>/dev/null)"; then
+    CTID="$CTID_AUTO"
+  else
+    echo ">>> pvesh unavailable or failed — falling back to manual ID scan..."
+    USED_IDS="$( { pct list 2>/dev/null | awk 'NR>1 {print $1}'; qm list 2>/dev/null | awk 'NR>1 {print $1}'; } | sort -n | tail -1)"
+    CTID=$(( ${USED_IDS:-100} + 1 ))
+  fi
+fi
+echo ">>> Using container ID: $CTID"
 
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter
-    restart: unless-stopped
-    networks: [monitoring]
-    pid: host
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    ports:
-      - "9100:9100"
+# NOTE: intentionally named CT_HOSTNAME, not HOSTNAME — bash auto-populates
+# $HOSTNAME with the current machine's hostname (e.g. "pve"), so using
+# HOSTNAME here would silently ignore the "monitoring" default.
+CT_HOSTNAME="${CT_HOSTNAME:-monitoring}"
+STORAGE="${STORAGE:-local-lvm}"          # storage pool for the rootfs
+TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"  # storage pool holding CT templates
+DISK_SIZE="${DISK_SIZE:-64}"             # GB
+MEMORY="${MEMORY:-8192}"                 # MB
+SWAP="${SWAP:-512}"                      # MB
+CORES="${CORES:-2}"
+BRIDGE="${BRIDGE:-vmbr0}"
+IP_CONFIG="${IP_CONFIG:-dhcp}"           # e.g. "192.168.1.50/24,gw=192.168.1.1" or "dhcp"
+TEMPLATE="${TEMPLATE:-debian-12-standard_12.7-1_amd64.tar.zst}"
+PASSWORD="${PASSWORD:-}"                 # leave blank to auto-generate
 
-  speedtest-exporter:
-    image: miguelndecarvalho/speedtest-exporter:latest
-    container_name: speedtest-exporter
-    restart: unless-stopped
-    networks: [monitoring]
-    environment:
-      - SPEEDTEST_CACHE_FOR=5m   # cache result so scrapes don't each trigger a new test
-    ports:
-      - "9798:9798"
+# ---------------------------------------------------------------------------
+if [[ -z "$PASSWORD" ]]; then
+  # "|| true" prevents a false-positive failure: head closes the pipe after
+  # 20 bytes, which sends tr a SIGPIPE (exit 141) even though the password
+  # was generated correctly — with pipefail on, that would otherwise abort
+  # the whole script.
+  PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20 || true)"
+fi
 
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    restart: unless-stopped
-    networks: [monitoring]
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      - prometheus
+echo ">>> Checking template availability..."
+if ! pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE"; then
+  echo ">>> Downloading template $TEMPLATE ..."
+  pveam update
+  pveam download "$TEMPLATE_STORAGE" "$TEMPLATE"
+fi
 
-  uptime-kuma:
-    image: louislam/uptime-kuma:1
-    container_name: uptime-kuma
-    restart: unless-stopped
-    networks: [monitoring]
-    volumes:
-      - uptime-kuma-data:/app/data
-    ports:
-      - "3001:3001"
+echo ">>> Creating LXC $CTID ($CT_HOSTNAME) ..."
+pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
+  --hostname "$CT_HOSTNAME" \
+  --cores "$CORES" \
+  --memory "$MEMORY" \
+  --swap "$SWAP" \
+  --rootfs "${STORAGE}:${DISK_SIZE}" \
+  --net0 "name=eth0,bridge=${BRIDGE},ip=${IP_CONFIG},firewall=1" \
+  --unprivileged 1 \
+  --features "nesting=1,keyctl=1" \
+  --onboot 1 \
+  --password "$PASSWORD"
+
+echo ">>> Starting container ..."
+pct start "$CTID"
+sleep 8
+
+echo ">>> Installing Docker, Docker Compose, and the monitoring stack inside the container ..."
+pct exec "$CTID" -- bash -c '
+set -e
+apt-get update
+apt-get install -y ca-certificates curl gnupg git
+
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+systemctl enable --now docker
+mkdir -p /opt/monitoring
+'
+
+echo ">>> Copying monitoring stack files into the container ..."
+STACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+pct push "$CTID" "${STACK_DIR}/docker-compose.yml" /opt/monitoring/docker-compose.yml
+pct push "$CTID" "${STACK_DIR}/.env.example" /opt/monitoring/.env
+pct exec "$CTID" -- mkdir -p /opt/monitoring/prometheus/targets /opt/monitoring/grafana/provisioning/datasources /opt/monitoring/grafana/provisioning/dashboards
+pct push "$CTID" "${STACK_DIR}/prometheus/prometheus.yml" /opt/monitoring/prometheus/prometheus.yml
+pct push "$CTID" "${STACK_DIR}/prometheus/alert_rules.yml" /opt/monitoring/prometheus/alert_rules.yml
+pct push "$CTID" "${STACK_DIR}/prometheus/blackbox.yml" /opt/monitoring/prometheus/blackbox.yml
+pct push "$CTID" "${STACK_DIR}/prometheus/targets/local-icmp-targets.yml" /opt/monitoring/prometheus/targets/local-icmp-targets.yml
+pct push "$CTID" "${STACK_DIR}/prometheus/targets/local-tcp-targets.yml" /opt/monitoring/prometheus/targets/local-tcp-targets.yml
+pct push "$CTID" "${STACK_DIR}/grafana/provisioning/datasources/datasource.yml" /opt/monitoring/grafana/provisioning/datasources/datasource.yml
+pct push "$CTID" "${STACK_DIR}/grafana/provisioning/dashboards/dashboards.yml" /opt/monitoring/grafana/provisioning/dashboards/dashboards.yml
+
+echo ">>> Launching the stack ..."
+pct exec "$CTID" -- bash -c 'cd /opt/monitoring && docker compose up -d'
+
+IP=$(pct exec "$CTID" -- hostname -I | awk '{print $1}')
+
+cat <<EOF
+
+=========================================================================
+ Monitoring LXC ready!  (CTID: $CTID, hostname: $CT_HOSTNAME)
+ Root password: $PASSWORD
+
+ Container IP: $IP
+
+ Services:
+   Grafana:      http://$IP:3000    (login: admin / admin — change on first login)
+   Prometheus:   http://$IP:9090
+   Uptime Kuma:  http://$IP:3001    (create your admin account on first visit)
+
+ To add your LAN devices (router, NAS, PCs, game consoles, self-hosted
+ apps), edit these files inside the container — no restart needed, changes
+ are picked up automatically within ~30s:
+   /opt/monitoring/prometheus/targets/local-icmp-targets.yml   (ping checks)
+   /opt/monitoring/prometheus/targets/local-tcp-targets.yml    (port checks)
+
+ For everything else (web services, banking/e-wallet apps, games, WAN
+ anchors), edit /opt/monitoring/prometheus/prometheus.yml, then run:
+   docker compose restart prometheus
+
+ WAN/uplink health (latency, packet loss, down detection, real speedtest)
+ is monitored automatically — see Grafana for WAN dashboards, or query
+ speedtest_download_bits_per_second / probe_success{group="wan"} directly.
+
+ Uptime Kuma monitors are configured through its web UI — see README.md
+ for a starter checklist of common services/games/infra/financial apps.
+=========================================================================
+EOF
